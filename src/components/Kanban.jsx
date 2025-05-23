@@ -2,43 +2,80 @@ import { useEffect, useState } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { Card, Container, Row, Col, Button, Modal, Form } from 'react-bootstrap';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, collection, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { v4 as uuid } from 'uuid';
 
-const Kanban = () => {
+const Kanban = ({ user }) => {
   const [columns, setColumns] = useState({});
   const [taskToDelete, setTaskToDelete] = useState(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [undoTask, setUndoTask] = useState(null);
   const [undoTimeout, setUndoTimeout] = useState(null);
   const [newTaskText, setNewTaskText] = useState('');
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  const [editingTask, setEditingTask] = useState(null);
+  const [editText, setEditText] = useState('');
 
   const columnOrder = ['todo', 'inprogress', 'done'];
 
   useEffect(() => {
     const docRef = doc(db, 'kanban', 'shared');
 
-    const unsubscribe = onSnapshot(docRef, (docSnap) => {
-      if (docSnap.exists()) {
-        setColumns(docSnap.data());
-      } else {
-        const initial = {
-          todo: { name: 'To Do', items: [] },
-          inprogress: { name: 'In Progress', items: [] },
-          done: { name: 'Done', items: [] },
-        };
-        setDoc(docRef, initial);
-        setColumns(initial);
+    const unsubscribe = onSnapshot(
+      docRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setColumns(docSnap.data());
+        } else {
+          const initial = {
+            todo: { name: 'To Do', items: [] },
+            inprogress: { name: 'In Progress', items: [] },
+            done: { name: 'Done', items: [] },
+          };
+          setDoc(docRef, initial);
+          setColumns(initial);
+        }
+      },
+      (error) => {
+        console.error('Live sync error:', error);
       }
-    }, (error) => {
-      console.error('Live sync error:', error);
-    });
+    );
 
     return () => {
       unsubscribe();
       clearTimeout(undoTimeout);
     };
   }, [undoTimeout]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    const presenceRef = doc(db, 'kanban', 'shared', 'presence', user.uid);
+    const presenceListRef = collection(db, 'kanban', 'shared', 'presence');
+
+    setDoc(presenceRef, {
+      displayName: user.displayName,
+      photoURL: user.photoURL,
+      lastActive: serverTimestamp(),
+    });
+
+    const cleanup = () => deleteDoc(presenceRef);
+    window.addEventListener('beforeunload', cleanup);
+
+    const unsubscribePresence = onSnapshot(presenceListRef, (snapshot) => {
+      const usersOnline = [];
+      snapshot.forEach((doc) => {
+        usersOnline.push(doc.data());
+      });
+      setOnlineUsers(usersOnline);
+    });
+
+    return () => {
+      window.removeEventListener('beforeunload', cleanup);
+      cleanup();
+      unsubscribePresence();
+    };
+  }, [user]);
 
   const saveColumns = async (newCols) => {
     setColumns(newCols);
@@ -91,7 +128,7 @@ const Kanban = () => {
       ...columns,
       [columnId]: {
         ...columns[columnId],
-        items: columns[columnId].items.filter(item => item.id !== task.id),
+        items: columns[columnId].items.filter((item) => item.id !== task.id),
       },
     };
 
@@ -137,8 +174,66 @@ const Kanban = () => {
     saveColumns(updated);
   };
 
+  const handleEdit = (task, columnId, index) => {
+    setEditingTask({ ...task, columnId, index });
+    setEditText(task.text);
+  };
+
+  const saveEdit = () => {
+    if (!editingTask || !editText.trim()) return;
+
+    const updatedItems = [...columns[editingTask.columnId].items];
+    updatedItems[editingTask.index] = { ...editingTask, text: editText.trim() };
+
+    const updatedCols = {
+      ...columns,
+      [editingTask.columnId]: {
+        ...columns[editingTask.columnId],
+        items: updatedItems,
+      },
+    };
+
+    setEditingTask(null);
+    setEditText('');
+    saveColumns(updatedCols);
+  };
+
   return (
     <Container fluid className="mt-4">
+      {user && (
+        <div className="text-center mb-3">
+          <img
+            src={user.photoURL}
+            alt={user.displayName}
+            style={{
+              width: '48px',
+              height: '48px',
+              borderRadius: '50%',
+              marginRight: '0.5rem',
+              objectFit: 'cover',
+            }}
+          />
+          <span>Welcome, {user.displayName}</span>
+        </div>
+      )}
+
+      {onlineUsers.length > 0 && (
+        <div className="text-center mb-2">
+          <small>Currently Online:</small>
+          <div className="d-flex justify-content-center flex-wrap gap-2 mt-1">
+            {onlineUsers.map((u, i) => (
+              <img
+                key={i}
+                src={u.photoURL}
+                alt={u.displayName}
+                title={u.displayName}
+                style={{ width: '32px', height: '32px', borderRadius: '50%' }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       <h2 className="mb-4 text-center">📝 Quick & Dirty Kanban Board</h2>
 
       <Form
@@ -172,8 +267,11 @@ const Kanban = () => {
             if (!col) return null;
 
             const columnColor =
-              colId === 'todo' ? '#FFF9C4' :
-              colId === 'inprogress' ? '#B2EBF2' : '#C8E6C9';
+              colId === 'todo'
+                ? '#FFF9C4'
+                : colId === 'inprogress'
+                ? '#B2EBF2'
+                : '#C8E6C9';
 
             return (
               <Col key={colId}>
@@ -205,17 +303,42 @@ const Kanban = () => {
                               }}
                             >
                               <Card.Body className="d-flex justify-content-between align-items-center">
-                                <Card.Text className="mb-0">{item.text}</Card.Text>
-                                <Button
-                                  variant="outline-danger"
-                                  size="sm"
-                                  onClick={() => {
-                                    setTaskToDelete({ columnId: colId, task: item, index });
-                                    setShowConfirm(true);
-                                  }}
-                                >
-                                  &times;
-                                </Button>
+                                {editingTask?.id === item.id ? (
+                                  <Form.Control
+                                    size="sm"
+                                    value={editText}
+                                    onChange={(e) => setEditText(e.target.value)}
+                                    onBlur={saveEdit}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        saveEdit();
+                                      }
+                                    }}
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <Card.Text className="mb-0">{item.text}</Card.Text>
+                                )}
+                                <div className="d-flex gap-1">
+                                  <Button
+                                    variant="outline-secondary"
+                                    size="sm"
+                                    onClick={() => handleEdit(item, colId, index)}
+                                  >
+                                    ✏️
+                                  </Button>
+                                  <Button
+                                    variant="outline-danger"
+                                    size="sm"
+                                    onClick={() => {
+                                      setTaskToDelete({ columnId: colId, task: item, index });
+                                      setShowConfirm(true);
+                                    }}
+                                  >
+                                    &times;
+                                  </Button>
+                                </div>
                               </Card.Body>
                             </Card>
                           )}
@@ -263,4 +386,3 @@ const Kanban = () => {
 };
 
 export default Kanban;
-
