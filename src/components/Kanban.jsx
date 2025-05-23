@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { Card, Container, Row, Col, Button, Modal, Form } from 'react-bootstrap';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { v4 as uuid } from 'uuid';
 
-const Kanban = ({ user }) => {
+const Kanban = () => {
   const [columns, setColumns] = useState({});
   const [taskToDelete, setTaskToDelete] = useState(null);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -13,42 +13,37 @@ const Kanban = ({ user }) => {
   const [undoTimeout, setUndoTimeout] = useState(null);
   const [newTaskText, setNewTaskText] = useState('');
 
-  // Fixed column order: In Progress, To Do, Done
-  const columnOrder = ['inprogress', 'todo', 'done'];
+  const columnOrder = ['todo', 'inprogress', 'done'];
 
   useEffect(() => {
-    if (!user?.uid) return;
+    const docRef = doc(db, 'kanban', 'shared');
 
-    const fetchData = async () => {
-      try {
-        const docRef = doc(db, 'kanban', user.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setColumns(docSnap.data());
-        } else {
-          const initial = {
-            todo: { name: 'To Do', items: [] },
-            inprogress: { name: 'User Stories', items: [] },
-            done: { name: 'Done', items: [] },
-          };
-          await setDoc(docRef, initial);
-          setColumns(initial);
-        }
-      } catch (error) {
-        console.error('Error fetching kanban data:', error);
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setColumns(docSnap.data());
+      } else {
+        const initial = {
+          todo: { name: 'To Do', items: [] },
+          inprogress: { name: 'In Progress', items: [] },
+          done: { name: 'Done', items: [] },
+        };
+        setDoc(docRef, initial);
+        setColumns(initial);
       }
-    };
-    fetchData();
+    }, (error) => {
+      console.error('Live sync error:', error);
+    });
 
-    return () => clearTimeout(undoTimeout);
-  }, [user?.uid, undoTimeout]);
+    return () => {
+      unsubscribe();
+      clearTimeout(undoTimeout);
+    };
+  }, [undoTimeout]);
 
   const saveColumns = async (newCols) => {
     setColumns(newCols);
     try {
-      if (user?.uid) {
-        await setDoc(doc(db, 'kanban', user.uid), newCols);
-      }
+      await setDoc(doc(db, 'kanban', 'shared'), newCols);
     } catch (error) {
       console.error('Error saving kanban data:', error);
     }
@@ -178,8 +173,7 @@ const Kanban = ({ user }) => {
 
             const columnColor =
               colId === 'todo' ? '#FFF9C4' :
-              colId === 'inprogress' ? '#B2EBF2' :
-              '#C8E6C9';
+              colId === 'inprogress' ? '#B2EBF2' : '#C8E6C9';
 
             return (
               <Col key={colId}>
@@ -269,3 +263,4 @@ const Kanban = ({ user }) => {
 };
 
 export default Kanban;
+
