@@ -13,6 +13,9 @@ const Kanban = ({ user }) => {
   const [undoTimeout, setUndoTimeout] = useState(null);
   const [newTaskText, setNewTaskText] = useState('');
 
+  // Fixed column order: In Progress, To Do, Done
+  const columnOrder = ['inprogress', 'todo', 'done'];
+
   useEffect(() => {
     if (!user?.uid) return;
 
@@ -169,9 +172,14 @@ const Kanban = ({ user }) => {
 
       <DragDropContext onDragEnd={onDragEnd}>
         <Row>
-          {Object.entries(columns).map(([colId, col]) => {
+          {columnOrder.map((colId) => {
+            const col = columns[colId];
+            if (!col) return null;
+
             const columnColor =
-              colId === 'todo' ? '#FFF9C4' : colId === 'inprogress' ? '#B2EBF2' : '#C8E6C9';
+              colId === 'todo' ? '#FFF9C4' :
+              colId === 'inprogress' ? '#B2EBF2' :
+              '#C8E6C9';
 
             return (
               <Col key={colId}>

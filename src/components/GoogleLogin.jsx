@@ -37,6 +37,7 @@ const GoogleLogin = ({ onUserChange }) => {
           <button onClick={handleLogout}>Logout</button>
         </div>
       ) : (
+      
         <button
           onClick={handleLogin}
           style={{
